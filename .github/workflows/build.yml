@@ -1,0 +1,114 @@
+name: build geo (ru-inside)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 0 * * *" # каждый день в 00:30 UTC (после апстримов)
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/README.md"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Set variables
+        run: |
+          echo "RELEASE_NAME=$(date +%d-%m-%Y)" >> $GITHUB_ENV
+          echo "TAG_NAME=$(date +%d-%m-%Y)" >> $GITHUB_ENV
+
+      # ── Источники данных (upstream напрямую) ──────────────────────
+      - name: Checkout runetfreedom/russia-domains-list
+        uses: actions/checkout@v4
+        with:
+          repository: runetfreedom/russia-domains-list
+          path: domains-ru
+
+      - name: Checkout hxehex/russia-mobile-internet-whitelist
+        uses: actions/checkout@v4
+        with:
+          repository: hxehex/russia-mobile-internet-whitelist
+          path: mobile-whitelist
+
+      - name: Checkout v2fly/domain-list-community (сборщик + category-gov-ru)
+        uses: actions/checkout@v4
+        with:
+          repository: v2fly/domain-list-community
+          path: community
+
+      # ── Объединённый список ───────────────────────────────────────
+      - name: Merge lists into ru-inside
+        run: |
+          mkdir -p ./data ./publish
+          grep -v '^include:category-gov-ru' ./domains-ru/ru-available-only-inside > ./data/ru-inside
+          cat ./community/data/category-gov-ru >> ./data/ru-inside
+          cat ./mobile-whitelist/whitelist.txt >> ./data/ru-inside
+          echo "Всего строк: $(wc -l < ./data/ru-inside)"
+
+      # ── geosite.dat для Happ (Xray) ───────────────────────────────
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ./community/go.mod
+          cache-dependency-path: ./community/go.sum
+
+      - name: Build geosite.dat
+        run: |
+          printf '%s\n' '[{"name":"geosite.dat","mode":"allowlist","lists":["ru-inside"]}]' > ./datprofile.json
+          cd community
+          go run ./ \
+            --datapath=../data \
+            --datprofile=../datprofile.json \
+            --outputdir=../publish
+
+      # ── ru-inside.mrs для Mihomo / KoalaClash ─────────────────────
+      - name: Build ru-inside.mrs
+        run: |
+          # v2fly-формат -> текстовый формат mihomo:
+          #   example.com        -> +.example.com   (суффиксный матч)
+          #   full:example.com   -> example.com     (точный матч)
+          #   domain:example.com -> +.example.com
+          #   regexp:/keyword:/include: -> пропускаем (в .mrs не поддерживаются)
+          sed -e 's/#.*//' -e 's/[[:space:]]*$//' ./data/ru-inside \
+            | grep -v '^$' \
+            | grep -vE '^(regexp:|keyword:|include:)' \
+            | sed -E -e 's/^full:(.*)$/\1/' -e 's/^domain:(.*)$/+.\1/' -e '/^\+\./!s/^([^+].*)$/+.\1/' \
+            | sort -u > ./publish/ru-inside.txt
+
+          gh release download -R MetaCubeX/mihomo --pattern 'mihomo-linux-amd64-v*.gz' -O mihomo.gz
+          gunzip mihomo.gz && chmod +x mihomo
+          ./mihomo convert-ruleset domain text ./publish/ru-inside.txt ./publish/ru-inside.mrs
+
+      # ── Контрольные суммы и публикация ────────────────────────────
+      - name: Checksums
+        run: |
+          cd publish
+          sha256sum geosite.dat > geosite.dat.sha256sum
+          sha256sum ru-inside.mrs > ru-inside.mrs.sha256sum
+
+      - name: Release and upload assets
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          release_name: ${{ env.RELEASE_NAME }}
+          tag: ${{ env.TAG_NAME }}
+          file_glob: true
+          file: ./publish/*
+          overwrite: true
+
+      - name: Push assets to "release" branch
+        run: |
+          cd publish || exit 1
+          git init
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b release
+          git add .
+          git commit -m "${{ env.RELEASE_NAME }}"
+          git remote add origin "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git push -f -u origin release
