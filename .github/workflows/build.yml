@@ -41,6 +41,22 @@ jobs:
           repository: v2fly/domain-list-community
           path: community
 
+      - name: Checkout Loyalsoldier/geoip (сборщик geoip.dat)
+        uses: actions/checkout@v4
+        with:
+          repository: Loyalsoldier/geoip
+          path: geoip-builder
+
+      - name: Download Russian IP ranges (scanitex)
+        run: |
+          curl -fsSL -o ./ip-russia.txt "https://scanitex.com/ru/resources/ip-ranges/ru/download/cidr"
+          CIDR_COUNT=$(grep -cE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+' ./ip-russia.txt || true)
+          echo "CIDR-подсетей: ${CIDR_COUNT}"
+          if [ "${CIDR_COUNT}" -lt 1000 ]; then
+            echo "::error::Список IP подозрительно короткий — источник вернул мусор, прерываю сборку"
+            exit 1
+          fi
+
       # ── Объединённый список ───────────────────────────────────────
       - name: Merge lists into ru-inside
         run: |
@@ -85,12 +101,36 @@ jobs:
           gunzip mihomo.gz && chmod +x mihomo
           ./mihomo convert-ruleset domain text ./publish/ru-inside.txt ./publish/ru-inside.mrs
 
+      # ── geoip.dat для Happ (Xray) ─────────────────────────────────
+      - name: Build geoip.dat
+        run: |
+          cat > ./geoip-config.json << 'EOF'
+          {
+            "input": [
+              { "type": "text", "action": "add", "args": { "name": "ru", "uri": "../ip-russia.txt" } },
+              { "type": "private", "action": "add" }
+            ],
+            "output": [
+              { "type": "v2rayGeoIPDat", "action": "output", "args": { "outputDir": "../publish", "outputName": "geoip.dat" } }
+            ]
+          }
+          EOF
+          cd geoip-builder
+          go run ./ -c ../geoip-config.json
+
+      # ── ru-ip.mrs для Mihomo / KoalaClash ─────────────────────────
+      - name: Build ru-ip.mrs
+        run: |
+          grep -E '^[0-9]' ./ip-russia.txt > ./publish/ru-ip.txt
+          ./mihomo convert-ruleset ipcidr text ./publish/ru-ip.txt ./publish/ru-ip.mrs
+
       # ── Контрольные суммы и публикация ────────────────────────────
       - name: Checksums
         run: |
           cd publish
-          sha256sum geosite.dat > geosite.dat.sha256sum
-          sha256sum ru-inside.mrs > ru-inside.mrs.sha256sum
+          for f in geosite.dat ru-inside.mrs geoip.dat ru-ip.mrs; do
+            sha256sum "$f" > "$f.sha256sum"
+          done
 
       - name: Release and upload assets
         uses: svenstaro/upload-release-action@v2
