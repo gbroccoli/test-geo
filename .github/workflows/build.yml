@@ -64,6 +64,7 @@ jobs:
           grep -v '^include:category-gov-ru' ./domains-ru/ru-available-only-inside > ./data/ru-inside
           cat ./community/data/category-gov-ru >> ./data/ru-inside
           cat ./mobile-whitelist/whitelist.txt >> ./data/ru-inside
+          cp ./community/data/private ./data/private
           echo "Всего строк: $(wc -l < ./data/ru-inside)"
 
       # ── geosite.dat для Happ (Xray) ───────────────────────────────
@@ -75,7 +76,7 @@ jobs:
 
       - name: Build geosite.dat
         run: |
-          printf '%s\n' '[{"name":"geosite.dat","mode":"allowlist","lists":["ru-inside"]}]' > ./datprofile.json
+          printf '%s\n' '[{"name":"geosite.dat","mode":"allowlist","lists":["ru-inside","private"]}]' > ./datprofile.json
           cd community
           go run ./ \
             --datapath=../data \
