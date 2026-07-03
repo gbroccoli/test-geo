@@ -80,7 +80,8 @@ jobs:
             | sed -E -e 's/^full:(.*)$/\1/' -e 's/^domain:(.*)$/+.\1/' -e '/^\+\./!s/^([^+].*)$/+.\1/' \
             | sort -u > ./publish/ru-inside.txt
 
-          gh release download -R MetaCubeX/mihomo --pattern 'mihomo-linux-amd64-v*.gz' -O mihomo.gz
+          TAG=$(gh release view -R MetaCubeX/mihomo --json tagName -q .tagName)
+          gh release download -R MetaCubeX/mihomo --pattern "mihomo-linux-amd64-${TAG}.gz" -O mihomo.gz
           gunzip mihomo.gz && chmod +x mihomo
           ./mihomo convert-ruleset domain text ./publish/ru-inside.txt ./publish/ru-inside.mrs
 
