@@ -116,7 +116,7 @@ jobs:
           }
           EOF
           cd geoip-builder
-          go run ./ -c ../geoip-config.json
+          go run ./ convert -c ../geoip-config.json
 
       # ── ru-ip.mrs для Mihomo / KoalaClash ─────────────────────────
       - name: Build ru-ip.mrs
